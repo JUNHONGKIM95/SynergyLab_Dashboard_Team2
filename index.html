@@ -152,6 +152,24 @@
             margin-top: 5px;
         }
 
+        .transaction-discussion {
+            margin-top: 10px;
+            padding: 10px 12px;
+            border-left: 3px solid #f5576c;
+            background: #fff5f8;
+            color: #444;
+            font-size: 13px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+        }
+
+        .transaction-warning {
+            margin-top: 10px;
+            color: #c33;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
         .transaction-amount {
             font-size: 16px;
             font-weight: 700;
@@ -175,6 +193,15 @@
         .error {
             background: #fee;
             color: #c33;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            line-height: 1.5;
+        }
+
+        .warning-message {
+            background: #fff7e6;
+            color: #9a5b00;
             padding: 15px;
             border-radius: 6px;
             margin-bottom: 20px;
@@ -242,39 +269,18 @@
         </div>
 
         <div id="errorMsg" class="error" style="display: none;"></div>
+        <div id="warningMsg" class="warning-message" style="display: none;"></div>
 
         <div class="dashboard">
-            <div class="card budget">
-                <div class="card-title">총 예산</div>
-                <div class="card-value" id="totalBudget">-</div>
-            </div>
-
             <div class="card spent">
                 <div class="card-title">사용액</div>
                 <div class="card-value" id="spentAmount">-</div>
-            </div>
-
-            <div class="card remaining">
-                <div class="card-title">잔액</div>
-                <div class="card-value" id="remainingAmount">-</div>
-            </div>
-        </div>
-
-        <div class="dashboard">
-            <div class="card">
-                <div class="card-title">사용률</div>
-                <div class="percentage-bar">
-                    <div class="percentage-fill" id="percentageBar" style="width: 0%"></div>
-                </div>
-                <div style="text-align: center; margin-top: 10px; font-size: 14px; color: #666;">
-                    <span id="percentageText">0%</span>
-                </div>
             </div>
         </div>
 
         <div class="transactions">
             <div class="filter-section">
-                <div class="transactions-title">최근 거래 내역</div>
+                <div class="transactions-title">최근 사용 내역</div>
                 <button class="refresh-btn" type="button" onclick="loadData()">새로고침</button>
             </div>
             <div id="transactionList" class="loading">로딩 중...</div>
@@ -285,16 +291,19 @@
         const SPREADSHEET_ID = "1IlJyCo1tP64REEkJs6hvSYC5s2DLMjy7ta8QSFllzTk";
         const MASTER_SHEET_NAME = "관리자_마스터 예산";
         const RESPONSE_SHEET_NAME = "설문지 응답 2";
+        const MEETING_SHEET_NAME = "설문지 응답 1";
         const TEAM_NAME = "AI integrated MPS 연구팀";
 
         async function loadData() {
             try {
                 clearError();
+                clearWarning();
                 setLoading(true);
 
-                const [masterRecords, responseRecords] = await Promise.all([
+                const [masterRecords, responseRecords, meetingRecords] = await Promise.all([
                     loadGoogleSheet(MASTER_SHEET_NAME),
-                    loadGoogleSheet(RESPONSE_SHEET_NAME)
+                    loadGoogleSheet(RESPONSE_SHEET_NAME),
+                    loadGoogleSheet(MEETING_SHEET_NAME)
                 ]);
 
                 const teamData = parseTeamData(masterRecords, TEAM_NAME);
@@ -302,7 +311,10 @@
                     throw new Error(`마스터 예산 시트에서 '${TEAM_NAME}' 팀 정보를 찾지 못했습니다.`);
                 }
 
-                const transactions = parseTransactions(responseRecords, TEAM_NAME);
+                const { transactions, warnings } = parseTransactions(responseRecords, meetingRecords, TEAM_NAME);
+                if (warnings.length > 0) {
+                    showWarning(`설문지 응답 1에서 매칭되는 논의 내용이 2건 이상인 사용 내역이 있습니다: ${warnings.join(", ")}. 참여 팀명과 진행회차를 확인해주세요.`);
+                }
                 updateDashboard(teamData, transactions);
                 updateLastUpdate();
             } catch (error) {
@@ -373,24 +385,75 @@
 
             return {
                 team: getValue(record, "팀명"),
-                totalBudget: toNumber(getValue(record, "활동비 총 예산")),
-                spent: toNumber(getValue(record, "학술원 기입 지출액")),
-                remaining: toNumber(getValue(record, "현재 활동비 잔액"))
+                spent: toNumber(getValue(record, "학술원 기입 지출액"))
             };
         }
 
-        function parseTransactions(records, teamName) {
-            return records
+        function parseTransactions(records, meetingRecords, teamName) {
+            const discussionLookup = buildDiscussionLookup(meetingRecords, teamName);
+            const duplicateWarnings = new Set();
+
+            const transactions = records
                 .filter((record) => getValue(record, "대상 팀 명") === teamName)
-                .map((record) => ({
-                    date: getFormatted(record, "타임스탬프"),
-                    dateValue: parseGoogleDate(getValue(record, "타임스탬프")),
-                    round: getValue(record, "Q1. 관련 진행 회차"),
-                    amount: toNumber(getValue(record, "Q2. 활동비 차감 금액")),
-                    description: getValue(record, "Q3. 지출 내역 요약")
-                }))
+                .map((record) => {
+                    const transaction = {
+                        date: getFormatted(record, "타임스탬프"),
+                        dateValue: parseGoogleDate(getValue(record, "타임스탬프")),
+                        round: getValue(record, "Q1. 관련 진행 회차"),
+                        amount: toNumber(getValue(record, "Q2. 활동비 차감 금액")),
+                        description: getValue(record, "Q3. 지출 내역 요약"),
+                        discussion: "",
+                        hasDuplicateDiscussion: false
+                    };
+                    const matches = discussionLookup.get(buildDiscussionKey(teamName, transaction.round)) || [];
+
+                    if (matches.length === 1) {
+                        transaction.discussion = matches[0].discussion;
+                    } else if (matches.length > 1) {
+                        transaction.hasDuplicateDiscussion = true;
+                        duplicateWarnings.add(`${transaction.round || "진행회차 없음"} (${matches.length}건)`);
+                    }
+
+                    return transaction;
+                })
                 .filter((transaction) => transaction.amount > 0)
                 .sort((a, b) => b.dateValue - a.dateValue);
+
+            return {
+                transactions,
+                warnings: [...duplicateWarnings]
+            };
+        }
+
+        function buildDiscussionLookup(records, teamName) {
+            const lookup = new Map();
+
+            records
+                .filter((record) => getValue(record, "참여 팀 명") === teamName)
+                .forEach((record) => {
+                    const round = getValue(record, "Q1. 진행 회차");
+                    const key = buildDiscussionKey(teamName, round);
+                    if (!key) return;
+
+                    const matches = lookup.get(key) || [];
+                    matches.push({
+                        round,
+                        discussion: getValue(record, "Q4. 주요 논의 내용 및 결과")
+                    });
+                    lookup.set(key, matches);
+                });
+
+            return lookup;
+        }
+
+        function buildDiscussionKey(teamName, round) {
+            const normalizedTeam = normalizeMatchValue(teamName);
+            const normalizedRound = normalizeMatchValue(round);
+            return normalizedTeam && normalizedRound ? `${normalizedTeam}::${normalizedRound}` : "";
+        }
+
+        function normalizeMatchValue(value) {
+            return String(value || "").trim().replace(/\s+/g, " ");
         }
 
         function getValue(record, headerName) {
@@ -423,18 +486,7 @@
         }
 
         function updateDashboard(teamData, transactions) {
-            document.getElementById("totalBudget").textContent = formatCurrency(teamData.totalBudget);
             document.getElementById("spentAmount").textContent = formatCurrency(teamData.spent);
-            document.getElementById("remainingAmount").textContent = formatCurrency(teamData.remaining);
-
-            const remainingEl = document.getElementById("remainingAmount");
-            remainingEl.className = "card-value";
-            remainingEl.classList.add(teamData.remaining <= teamData.totalBudget * 0.1 ? "warning" : "success");
-
-            const percentage = teamData.totalBudget > 0 ? (teamData.spent / teamData.totalBudget) * 100 : 0;
-            document.getElementById("percentageBar").style.width = `${Math.min(percentage, 100)}%`;
-            document.getElementById("percentageText").textContent = `${percentage.toFixed(1)}%`;
-
             updateTransactionList(transactions);
         }
 
@@ -442,7 +494,7 @@
             const listEl = document.getElementById("transactionList");
 
             if (transactions.length === 0) {
-                listEl.innerHTML = '<div class="no-data">거래 내역이 없습니다.</div>';
+                listEl.innerHTML = '<div class="no-data">사용 내역이 없습니다.</div>';
                 return;
             }
 
@@ -452,6 +504,8 @@
                         <div class="transaction-date">${escapeHtml(transaction.date || "-")}</div>
                         <div class="transaction-desc">${escapeHtml(transaction.description || "내역 없음")}</div>
                         <div class="transaction-round">${escapeHtml(transaction.round || "")}</div>
+                        ${transaction.discussion ? `<div class="transaction-discussion">${escapeHtml(transaction.discussion)}</div>` : ""}
+                        ${transaction.hasDuplicateDiscussion ? '<div class="transaction-warning">논의 내용 매칭 데이터가 2건 이상입니다.</div>' : ""}
                     </div>
                     <div class="transaction-amount">-${formatCurrency(transaction.amount)}</div>
                 </div>
@@ -505,6 +559,16 @@
 
         function clearError() {
             document.getElementById("errorMsg").style.display = "none";
+        }
+
+        function showWarning(message) {
+            const warningEl = document.getElementById("warningMsg");
+            warningEl.textContent = `경고: ${message}`;
+            warningEl.style.display = "block";
+        }
+
+        function clearWarning() {
+            document.getElementById("warningMsg").style.display = "none";
         }
 
         window.addEventListener("load", loadData);
