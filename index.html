@@ -297,6 +297,31 @@
             gap: 16px;
         }
 
+        .section-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .toggle-btn {
+            background: #fff;
+            color: #f5576c;
+            border: 1px solid #f5576c;
+            padding: 9px 14px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s ease, color 0.3s ease;
+        }
+
+        .toggle-btn:hover {
+            background: #fff0f4;
+        }
+
+        #transactionList[hidden] {
+            display: none;
+        }
+
         @media (max-width: 768px) {
             body {
                 padding: 14px;
@@ -333,6 +358,18 @@
             .transaction-item {
                 align-items: flex-start;
             }
+
+            .filter-section {
+                flex-direction: column;
+            }
+
+            .section-actions {
+                width: 100%;
+            }
+
+            .section-actions button {
+                flex: 1;
+            }
         }
     </style>
 </head>
@@ -360,7 +397,17 @@
         <div class="transactions">
             <div class="filter-section">
                 <div class="transactions-title">최근 활동비 사용 내역</div>
-                <button class="refresh-btn" type="button" onclick="loadData()">새로고침</button>
+                <div class="section-actions">
+                    <button
+                        id="transactionToggle"
+                        class="toggle-btn"
+                        type="button"
+                        aria-expanded="true"
+                        aria-controls="transactionList"
+                        onclick="toggleTransactionDetails()"
+                    >내역 접기</button>
+                    <button class="refresh-btn" type="button" onclick="loadData()">새로고침</button>
+                </div>
             </div>
             <div id="transactionList" class="loading">로딩 중...</div>
         </div>
@@ -669,6 +716,16 @@
                     </div>
                 </div>
             `).join("");
+        }
+
+        function toggleTransactionDetails() {
+            const listEl = document.getElementById("transactionList");
+            const toggleEl = document.getElementById("transactionToggle");
+            const shouldExpand = listEl.hidden;
+
+            listEl.hidden = !shouldExpand;
+            toggleEl.setAttribute("aria-expanded", String(shouldExpand));
+            toggleEl.textContent = shouldExpand ? "내역 접기" : "내역 펼치기";
         }
 
         function setLoading(isLoading) {
