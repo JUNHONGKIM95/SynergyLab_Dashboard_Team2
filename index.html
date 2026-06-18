@@ -30,6 +30,34 @@
             padding: 30px;
             margin-bottom: 30px;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .header-content {
+            min-width: 0;
+        }
+
+        .form-link {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex: 0 0 auto;
+            min-height: 42px;
+            padding: 10px 16px;
+            border-radius: 5px;
+            background: #f5576c;
+            color: #fff;
+            font-size: 14px;
+            font-weight: 600;
+            text-decoration: none;
+            transition: background 0.3s ease;
+        }
+
+        .form-link:hover {
+            background: #f093fb;
         }
 
         .team-name {
@@ -70,7 +98,14 @@
             font-size: 14px;
             color: #777;
             letter-spacing: 0;
+            margin-bottom: 6px;
+        }
+
+        .card-description {
             margin-bottom: 15px;
+            color: #999;
+            font-size: 12px;
+            line-height: 1.5;
         }
 
         .card-value {
@@ -122,6 +157,14 @@
             color: #333;
         }
 
+        .transactions > .transactions-title {
+            margin-bottom: 20px;
+        }
+
+        .transactions + .transactions {
+            margin-top: 30px;
+        }
+
         .transaction-item {
             display: flex;
             justify-content: space-between;
@@ -150,6 +193,13 @@
             font-size: 12px;
             color: #777;
             margin-top: 5px;
+        }
+
+        .meeting-history-round {
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            margin-top: 0;
         }
 
         .transaction-meeting-meta {
@@ -258,6 +308,15 @@
                 padding: 20px;
             }
 
+            .header {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+
+            .form-link {
+                width: 100%;
+            }
+
             .team-name {
                 font-size: 22px;
             }
@@ -280,8 +339,11 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="team-name">AI integrated MPS 연구팀</div>
-            <div class="last-updated">마지막 업데이트: <span id="lastUpdate">로딩 중...</span></div>
+            <div class="header-content">
+                <div class="team-name">AI integrated MPS 연구팀</div>
+                <div class="last-updated">마지막 업데이트: <span id="lastUpdate">로딩 중...</span></div>
+            </div>
+            <a class="form-link" href="https://forms.gle/jiQefdUr6LReec1U6" target="_blank" rel="noopener noreferrer">모임 결과 및 지출 증빙</a>
         </div>
 
         <div id="errorMsg" class="error" style="display: none;"></div>
@@ -289,17 +351,23 @@
 
         <div class="dashboard">
             <div class="card spent">
-                <div class="card-title">사용액</div>
+                <div class="card-title">활동비 사용액</div>
+                <div class="card-description">총 100만원 내외 이용 가능 (식음료, 대관비 등 제외)</div>
                 <div class="card-value" id="spentAmount">-</div>
             </div>
         </div>
 
         <div class="transactions">
             <div class="filter-section">
-                <div class="transactions-title">최근 사용 내역</div>
+                <div class="transactions-title">최근 활동비 사용 내역</div>
                 <button class="refresh-btn" type="button" onclick="loadData()">새로고침</button>
             </div>
             <div id="transactionList" class="loading">로딩 중...</div>
+        </div>
+
+        <div class="transactions">
+            <div class="transactions-title">모임 히스토리</div>
+            <div id="meetingHistoryList" class="loading">로딩 중...</div>
         </div>
     </div>
 
@@ -328,10 +396,11 @@
                 }
 
                 const { transactions, warnings } = parseTransactions(responseRecords, meetingRecords, TEAM_NAME);
+                const meetingHistory = parseMeetingHistory(meetingRecords, TEAM_NAME);
                 if (warnings.length > 0) {
                     showWarning(`설문지 응답 1에서 매칭되는 논의 내용이 2건 이상인 사용 내역이 있습니다: ${warnings.join(", ")}. 참여 팀명과 진행회차를 확인해주세요.`);
                 }
-                updateDashboard(teamData, transactions);
+                updateDashboard(teamData, transactions, meetingHistory);
                 updateLastUpdate();
             } catch (error) {
                 console.error(error);
@@ -466,6 +535,19 @@
             return lookup;
         }
 
+        function parseMeetingHistory(records, teamName) {
+            return records
+                .filter((record) => getValue(record, "참여 팀 명") === teamName)
+                .map((record) => ({
+                    round: getValue(record, "Q1. 진행 회차"),
+                    meetingDate: formatMeetingDate(getValue(record, "Q2. 모임 진행 일자"), getFormatted(record, "Q2. 모임 진행 일자")),
+                    attendeeCount: getFormatted(record, "Q3. 총 참석 인원") || getValue(record, "Q3. 총 참석 인원"),
+                    discussion: getValue(record, "Q4. 주요 논의 내용 및 결과"),
+                    dateValue: parseGoogleDate(getValue(record, "타임스탬프"))
+                }))
+                .sort((a, b) => b.dateValue - a.dateValue);
+        }
+
         function buildDiscussionKey(teamName, round) {
             const normalizedTeam = normalizeMatchValue(teamName);
             const normalizedRound = normalizeMatchValue(round);
@@ -533,9 +615,10 @@
             return Number.isNaN(parsed.getTime()) ? new Date(0) : parsed;
         }
 
-        function updateDashboard(teamData, transactions) {
+        function updateDashboard(teamData, transactions, meetingHistory) {
             document.getElementById("spentAmount").textContent = formatCurrency(teamData.spent);
             updateTransactionList(transactions);
+            updateMeetingHistory(meetingHistory);
         }
 
         function updateTransactionList(transactions) {
@@ -557,7 +640,6 @@
                                 ${transaction.attendeeCount ? `<span>참석 인원: ${escapeHtml(transaction.attendeeCount)}명</span>` : ""}
                             </div>
                         ` : ""}
-                        ${transaction.discussion ? `<div class="transaction-discussion">${escapeHtml(transaction.discussion)}</div>` : ""}
                         ${transaction.hasDuplicateDiscussion ? '<div class="transaction-warning">논의 내용 매칭 데이터가 2건 이상입니다.</div>' : ""}
                     </div>
                     <div class="transaction-amount">-${formatCurrency(transaction.amount)}</div>
@@ -565,13 +647,41 @@
             `).join("");
         }
 
+        function updateMeetingHistory(meetings) {
+            const listEl = document.getElementById("meetingHistoryList");
+
+            if (meetings.length === 0) {
+                listEl.innerHTML = '<div class="no-data">모임 기록이 없습니다.</div>';
+                return;
+            }
+
+            listEl.innerHTML = meetings.map((meeting) => `
+                <div class="transaction-item">
+                    <div class="transaction-info">
+                        <div class="transaction-round meeting-history-round">${escapeHtml(meeting.round || "진행회차 없음")}</div>
+                        ${(meeting.meetingDate || meeting.attendeeCount) ? `
+                            <div class="transaction-meeting-meta">
+                                ${meeting.meetingDate ? `<span>모임일: ${escapeHtml(meeting.meetingDate)}</span>` : ""}
+                                ${meeting.attendeeCount ? `<span>참석 인원: ${escapeHtml(meeting.attendeeCount)}명</span>` : ""}
+                            </div>
+                        ` : ""}
+                        ${meeting.discussion ? `<div class="transaction-discussion">${escapeHtml(meeting.discussion)}</div>` : ""}
+                    </div>
+                </div>
+            `).join("");
+        }
+
         function setLoading(isLoading) {
             const listEl = document.getElementById("transactionList");
+            const historyEl = document.getElementById("meetingHistoryList");
             if (isLoading) {
                 listEl.className = "loading";
                 listEl.textContent = "로딩 중...";
+                historyEl.className = "loading";
+                historyEl.textContent = "로딩 중...";
             } else {
                 listEl.classList.remove("loading");
+                historyEl.classList.remove("loading");
             }
         }
 
